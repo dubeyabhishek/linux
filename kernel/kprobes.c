@@ -39,6 +39,7 @@
 #include <linux/jump_label.h>
 #include <linux/static_call.h>
 #include <linux/perf_event.h>
+#include <linux/rethook.h>
 
 #include <asm/sections.h>
 #include <asm/cacheflush.h>
