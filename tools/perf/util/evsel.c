@@ -2097,11 +2097,12 @@ retry_open:
 			 * If we succeeded but had to kill clockid, fail and
 			 * have evsel__open_strerror() print us a nice error.
 			 */
+			/*
 			if (perf_missing_features.clockid ||
 			    perf_missing_features.clockid_wrong) {
 				err = -EINVAL;
 				goto out_close;
-			}
+			}*/
 		}
 	}
 

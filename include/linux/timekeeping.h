@@ -250,6 +250,20 @@ static inline time64_t ktime_get_clocktai_seconds(void)
 	return ktime_divns(ktime_get_coarse_clocktai(), NSEC_PER_SEC);
 }
 
+/* PowerPC specific
+ * PowerPC provides value of timebase register, which is absolute and
+ * monotonically increasing. We can use timebase value for timestamping of
+ * perf events.
+ */
+
+static inline u64 ktime_get_tb(void)
+{
+	uint64_t tb;
+	// 268 is the SPR number for the Time Base Register
+	asm volatile ("mfspr %0, 268" : "=r"(tb));
+	return tb;
+}
+
 /*
  * RTC specific
  */

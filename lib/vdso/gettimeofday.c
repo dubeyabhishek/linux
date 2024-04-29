@@ -245,6 +245,8 @@ __cvdso_clock_gettime_common(const struct vdso_data *vd, clockid_t clock,
 		return do_coarse(&vd[CS_HRES_COARSE], clock, ts);
 	else if (msk & VDSO_RAW)
 		vd = &vd[CS_RAW];
+	else if (msk & VDSO_TB)
+		return 0;
 	else
 		return -1;
 
@@ -383,6 +385,8 @@ int __cvdso_clock_getres_common(const struct vdso_data *vd, clockid_t clock,
 		 * Preserves the behaviour of posix_get_coarse_res().
 		 */
 		ns = LOW_RES_NSEC;
+	} else if (msk & VDSO_TB) {
+		return 0;
 	} else {
 		return -1;
 	}

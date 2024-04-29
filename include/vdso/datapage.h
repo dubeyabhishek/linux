@@ -33,6 +33,7 @@ struct arch_vdso_data {};
 #define VDSO_COARSE	(BIT(CLOCK_REALTIME_COARSE)	| \
 			 BIT(CLOCK_MONOTONIC_COARSE))
 #define VDSO_RAW	(BIT(CLOCK_MONOTONIC_RAW))
+#define VDSO_TB         (BIT(CLOCK_TB))
 
 #define CS_HRES_COARSE	0
 #define CS_RAW		1
