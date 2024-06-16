@@ -12363,6 +12363,9 @@ static int perf_event_set_clock(struct perf_event *event, clockid_t clk_id)
 		event->clock = &ktime_get_clocktai_ns;
 		break;
 
+	case CLOCK_TB:
+		event->clock = &ktime_get_clocktb;
+
 	default:
 		return -EINVAL;
 	}

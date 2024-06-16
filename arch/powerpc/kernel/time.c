@@ -1030,3 +1030,10 @@ static int __init rtc_init(void)
 
 device_initcall(rtc_init);
 #endif
+
+u64 get_clocktb(void)
+{
+        return mftb();
+}
+EXPORT_SYMBOL(get_clocktb);
+

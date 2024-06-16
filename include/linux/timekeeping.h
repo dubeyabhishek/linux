@@ -71,6 +71,7 @@ extern ktime_t ktime_get_coarse_with_offset(enum tk_offsets offs);
 extern ktime_t ktime_mono_to_any(ktime_t tmono, enum tk_offsets offs);
 extern ktime_t ktime_get_raw(void);
 extern u32 ktime_get_resolution_ns(void);
+extern u64 get_clocktb(void);
 
 /**
  * ktime_get_real - get the real (wall-) time in ktime_t format
@@ -207,6 +208,16 @@ static inline u64 ktime_get_clocktai_ns(void)
 static inline u64 ktime_get_raw_ns(void)
 {
 	return ktime_to_ns(ktime_get_raw());
+}
+
+/**
+ * ktime_get_clocktb - Get the timebase register value as timestamp
+ *
+ * Returns: current timebase register value
+ */
+static inline u64 ktime_get_clocktb(void)
+{
+	return get_clocktb();
 }
 
 extern u64 ktime_get_mono_fast_ns(void);

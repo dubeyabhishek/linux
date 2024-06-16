@@ -167,8 +167,8 @@ TRACE_EVENT(timer_base_idle,
 		{ CLOCK_REALTIME,	"CLOCK_REALTIME"	},	\
 		{ CLOCK_MONOTONIC,	"CLOCK_MONOTONIC"	},	\
 		{ CLOCK_BOOTTIME,	"CLOCK_BOOTTIME"	},	\
-		{ CLOCK_TAI,		"CLOCK_TAI"		})
-
+		{ CLOCK_TAI,		"CLOCK_TAI"		},	\
+		{ CLOCK_TB,		"CLOCK_TB"		})
 #define decode_hrtimer_mode(mode)					\
 	__print_symbolic(mode,						\
 		{ HRTIMER_MODE_ABS,		"ABS"		},	\

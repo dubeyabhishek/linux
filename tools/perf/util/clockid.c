@@ -32,6 +32,9 @@ struct clockid_map {
 #ifndef CLOCK_TAI
 #define CLOCK_TAI 11
 #endif
+#ifndef CLOCK_TB
+#define CLOCK_TB 12
+#endif
 
 static const struct clockid_map clockids[] = {
 	/* available for all events, NMI safe */
@@ -42,6 +45,7 @@ static const struct clockid_map clockids[] = {
 	CLOCKID_MAP("realtime", CLOCK_REALTIME),
 	CLOCKID_MAP("boottime", CLOCK_BOOTTIME),
 	CLOCKID_MAP("tai", CLOCK_TAI),
+	CLOCKID_MAP("tb", CLOCK_TB),
 
 	/* available for the lazy */
 	CLOCKID_MAP("mono", CLOCK_MONOTONIC),
