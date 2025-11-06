@@ -33,8 +33,6 @@
  * sp (r1) --->	[    stack pointer	] --------------
  */
 
-/* for gpr non volatile registers BPG_REG_6 to 10 */
-#define BPF_PPC_STACK_SAVE	(6*8)
 /* for bpf JIT code internal usage */
 #define BPF_PPC_STACK_LOCALS	32
 /* stack frame excluding BPF stack, ensure this is quadword aligned */
@@ -74,41 +72,6 @@ void bpf_jit_init_reg_mapping(struct codegen_context *ctx)
 
 /* PPC NVR range -- update this if we ever use NVRs below r26 */
 #define BPF_PPC_NVR_MIN		_R26
-
-static inline bool bpf_has_stack_frame(struct codegen_context *ctx)
-{
-	/*
-	 * We only need a stack frame if:
-	 * - we call other functions (kernel helpers), or
-	 * - the bpf program uses its stack area
-	 * The latter condition is deduced from the usage of BPF_REG_FP
-	 */
-	return ctx->seen & SEEN_FUNC || bpf_is_seen_register(ctx, bpf_to_ppc(BPF_REG_FP));
-}
-
-/*
- * When not setting up our own stackframe, the redzone (288 bytes) usage is:
- *
- *		[	prev sp		] <-------------
- *		[	  ...       	] 		|
- * sp (r1) --->	[    stack pointer	] --------------
- *		[   nv gpr save area	] 6*8
- *		[    tail_call_cnt	] 8
- *		[    local_tmp_var	] 24
- *		[   unused red zone	] 224
- */
-static int bpf_jit_stack_local(struct codegen_context *ctx)
-{
-	if (bpf_has_stack_frame(ctx))
-		return STACK_FRAME_MIN_SIZE + ctx->stack_size;
-	else
-		return -(BPF_PPC_STACK_SAVE + 32);
-}
-
-static int bpf_jit_stack_tailcallcnt(struct codegen_context *ctx)
-{
-	return bpf_jit_stack_local(ctx) + 24;
-}
 
 static int bpf_jit_stack_offsetof(struct codegen_context *ctx, int reg)
 {
