@@ -88,7 +88,7 @@ void bpf_jit_realloc_regs(struct codegen_context *ctx)
 {
 }
 
-void bpf_jit_build_prologue(u32 *image, struct codegen_context *ctx)
+int bpf_jit_build_prologue(u32 *image, struct codegen_context *ctx, bool is_subprog)
 {
 	int i;
 
@@ -105,13 +105,23 @@ void bpf_jit_build_prologue(u32 *image, struct codegen_context *ctx)
 	 * Otherwise, put in NOPs so that it can be skipped when we are
 	 * invoked through a tail call.
 	 */
-	if (ctx->seen & SEEN_TAILCALL) {
+	if (!is_subprog) {
 		EMIT(PPC_RAW_LI(bpf_to_ppc(TMP_REG_1), 0));
 		/* this goes in the redzone */
 		EMIT(PPC_RAW_STD(bpf_to_ppc(TMP_REG_1), _R1, -(BPF_PPC_STACK_SAVE + 8)));
 	} else {
-		EMIT(PPC_RAW_NOP());
-		EMIT(PPC_RAW_NOP());
+		/*
+		 * if tail_call_cnt < MAX_TAIL_CALL_CNT
+		 * 	main prog calling first subprog -> copy reference
+		 * else
+		 * 	subsequent subprog calling another subprog -> directly copy content
+		 */
+		EMIT(PPC_RAW_LD(bpf_to_ppc(TMP_REG_2), _R1, 0));
+		EMIT(PPC_RAW_LD(bpf_to_ppc(TMP_REG_1), bpf_to_ppc(TMP_REG_2), -(BPF_PPC_STACK_SAVE+8)));
+		EMIT(PPC_RAW_CMPLWI(bpf_to_ppc(TMP_REG_1), MAX_TAIL_CALL_CNT));
+		PPC_BCC_SHORT(COND_GT, CTX_NIA(ctx) + 8);
+		EMIT(PPC_RAW_ADDI(bpf_to_ppc(TMP_REG_1), bpf_to_ppc(TMP_REG_2), -(BPF_PPC_STACK_SAVE + 8)));
+		EMIT(PPC_RAW_STD(bpf_to_ppc(TMP_REG_1), _R1, -(BPF_PPC_STACK_SAVE + 8)));
 	}
 
 	if (bpf_has_stack_frame(ctx)) {
@@ -147,6 +157,7 @@ void bpf_jit_build_prologue(u32 *image, struct codegen_context *ctx)
 
 	if (ctx->arena_vm_start)
 		PPC_LI64(bpf_to_ppc(ARENA_VM_START), ctx->arena_vm_start);
+	return 0;
 }
 
 static void bpf_jit_emit_common_epilogue(u32 *image, struct codegen_context *ctx)
@@ -306,19 +317,39 @@ static int bpf_jit_emit_tail_call(u32 *image, struct codegen_context *ctx, u32 o
 	EMIT(PPC_RAW_CMPLW(b2p_index, bpf_to_ppc(TMP_REG_1)));
 	PPC_BCC_SHORT(COND_GE, out);
 
-	/*
-	 * if (tail_call_cnt >= MAX_TAIL_CALL_CNT)
-	 *   goto out;
-	 */
 	EMIT(PPC_RAW_LD(bpf_to_ppc(TMP_REG_1), _R1, bpf_jit_stack_tailcallcnt(ctx)));
 	EMIT(PPC_RAW_CMPLWI(bpf_to_ppc(TMP_REG_1), MAX_TAIL_CALL_CNT));
-	PPC_BCC_SHORT(COND_GE, out);
+	PPC_BCC_SHORT(COND_LE, (ctx->idx + 2) * 4);
+
+	/* dereference TMP_REG_1 */
+	EMIT(PPC_RAW_LD(bpf_to_ppc(TMP_REG_1), bpf_to_ppc(TMP_REG_1), 0));
+
+	/*
+	 * if (tail_call_cnt == MAX_TAIL_CALL_CNT)
+	 *   goto out;
+	 * else
+	 *   tail_call_cnt++;
+	 */
+	EMIT(PPC_RAW_CMPLWI(bpf_to_ppc(TMP_REG_1), MAX_TAIL_CALL_CNT));
+	PPC_BCC_SHORT(COND_EQ, out);
 
 	/*
 	 * tail_call_cnt++;
 	 */
 	EMIT(PPC_RAW_ADDI(bpf_to_ppc(TMP_REG_1), bpf_to_ppc(TMP_REG_1), 1));
-	EMIT(PPC_RAW_STD(bpf_to_ppc(TMP_REG_1), _R1, bpf_jit_stack_tailcallcnt(ctx)));
+
+	/*
+	 * Before writing updated tail_cnt, distinguish if current frame
+	 * is storing a reference to tail_cnt_val or actual tail_cnt_val.
+	 */
+	EMIT(PPC_RAW_LD(bpf_to_ppc(TMP_REG_2), _R1, bpf_jit_stack_tailcallcnt(ctx)));
+	EMIT(PPC_RAW_CMPLWI(bpf_to_ppc(TMP_REG_2), MAX_TAIL_CALL_CNT));
+	PPC_BCC_SHORT(COND_GT, (ctx->idx + 2) * 4);
+
+	/* Get address of tail_call_cnt */
+	EMIT(PPC_RAW_ADDI(bpf_to_ppc(TMP_REG_2), _R1, bpf_jit_stack_tailcallcnt(ctx)));
+	/* Update tail_call_cnt */
+	EMIT(PPC_RAW_STD(bpf_to_ppc(TMP_REG_1), bpf_to_ppc(TMP_REG_2), 0));
 
 	/* prog = array->ptrs[index]; */
 	EMIT(PPC_RAW_MULI(bpf_to_ppc(TMP_REG_1), b2p_index, 8));
