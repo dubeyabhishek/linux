@@ -88,7 +88,7 @@ void bpf_jit_realloc_regs(struct codegen_context *ctx)
 {
 }
 
-int bpf_jit_build_prologue(u32 *image, struct codegen_context *ctx, bool is_subprog)
+int bpf_jit_build_prologue(u32 *image, struct codegen_context *ctx, struct bpf_prog* fp)
 {
 	int i;
 
@@ -105,7 +105,7 @@ int bpf_jit_build_prologue(u32 *image, struct codegen_context *ctx, bool is_subp
 	 * Otherwise, put in NOPs so that it can be skipped when we are
 	 * invoked through a tail call.
 	 */
-	if (!is_subprog) {
+	if (!bpf_is_subprog(fp)) {
 		EMIT(PPC_RAW_LI(bpf_to_ppc(TMP_REG_1), 0));
 		/* this goes in the redzone */
 		EMIT(PPC_RAW_STD(bpf_to_ppc(TMP_REG_1), _R1, -(BPF_PPC_STACK_SAVE + 8)));
@@ -125,10 +125,10 @@ int bpf_jit_build_prologue(u32 *image, struct codegen_context *ctx, bool is_subp
 	}
 
 	if (bpf_has_stack_frame(ctx)) {
-		/*
-		 * We need a stack frame, but we don't necessarily need to
-		 * save/restore LR unless we call other functions
-		 */
+	/*
+	 * We need a stack frame, but we don't necessarily need to
+	 * save/restore LR unless we call other functions
+	 */
 		if (ctx->seen & SEEN_FUNC) {
 			EMIT(PPC_RAW_MFLR(_R0));
 			EMIT(PPC_RAW_STD(_R0, _R1, PPC_LR_STKOFF));
@@ -142,39 +142,75 @@ int bpf_jit_build_prologue(u32 *image, struct codegen_context *ctx, bool is_subp
 	 * If we haven't created our own stack frame, we save these
 	 * in the protected zone below the previous stack frame
 	 */
-	for (i = BPF_REG_6; i <= BPF_REG_10; i++)
-		if (bpf_is_seen_register(ctx, bpf_to_ppc(i)))
-			EMIT(PPC_RAW_STD(bpf_to_ppc(i), _R1, bpf_jit_stack_offsetof(ctx, bpf_to_ppc(i))));
+	if (!fp->aux->exception_cb) {
 
-	if (ctx->arena_vm_start)
-		EMIT(PPC_RAW_STD(bpf_to_ppc(ARENA_VM_START), _R1,
-				 bpf_jit_stack_offsetof(ctx, bpf_to_ppc(ARENA_VM_START))));
+		for (i = BPF_REG_6; i <= BPF_REG_10; i++)
+			if (fp->aux->exception_boundary || bpf_is_seen_register(ctx, bpf_to_ppc(i)))
+				EMIT(PPC_RAW_STD(bpf_to_ppc(i), _R1,
+					bpf_jit_stack_offsetof(ctx, bpf_to_ppc(i))));
 
-	/* Setup frame pointer to point to the bpf stack area */
-	if (bpf_is_seen_register(ctx, bpf_to_ppc(BPF_REG_FP)))
-		EMIT(PPC_RAW_ADDI(bpf_to_ppc(BPF_REG_FP), _R1,
-				STACK_FRAME_MIN_SIZE + ctx->stack_size));
+		if (fp->aux->exception_boundary || ctx->arena_vm_start)
+			EMIT(PPC_RAW_STD(bpf_to_ppc(ARENA_VM_START), _R1,
+				bpf_jit_stack_offsetof(ctx, bpf_to_ppc(ARENA_VM_START))));
+
+		/* Setup frame pointer to point to the bpf stack area */
+		if (bpf_is_seen_register(ctx, bpf_to_ppc(BPF_REG_FP)))
+			EMIT(PPC_RAW_ADDI(bpf_to_ppc(BPF_REG_FP), _R1, STACK_FRAME_MIN_SIZE + ctx->stack_size));
+	} else {
+		/* Exception callback receives Frame Pointer of main
+		 * program as third arg
+		 */
+		EMIT(PPC_RAW_MR(_R1, _R5));
+	}
 
 	if (ctx->arena_vm_start)
 		PPC_LI64(bpf_to_ppc(ARENA_VM_START), ctx->arena_vm_start);
+
 	return 0;
 }
 
-static void bpf_jit_emit_common_epilogue(u32 *image, struct codegen_context *ctx)
+void arch_bpf_stack_walk(bool (*consume_fn)(void *, u64, u64, u64), void *cookie)
+{
+	unsigned long ip, fpp, prev_ip=0;
+	fpp = current_stack_frame();
+	// callback processing always in context of current 
+	unsigned long *fp;
+
+	for (;;) {
+		fp = (unsigned long*) fpp;
+
+		ip = fp[STACK_FRAME_LR_SAVE];
+		if (!ip)
+			break;
+
+		if (prev_ip && !consume_fn(cookie, prev_ip, fpp, fpp))
+			break;
+
+		fpp = fp[0];
+		prev_ip = ip;
+        }
+}
+
+static void bpf_jit_emit_common_epilogue(u32 *image, struct codegen_context *ctx, struct bpf_prog* fp)
 {
 	int i;
 
 	/* Restore NVRs */
 	for (i = BPF_REG_6; i <= BPF_REG_10; i++)
-		if (bpf_is_seen_register(ctx, bpf_to_ppc(i)))
+		if ((fp && (fp->aux->exception_boundary || fp->aux->exception_cb)) || bpf_is_seen_register(ctx, bpf_to_ppc(i)))
 			EMIT(PPC_RAW_LD(bpf_to_ppc(i), _R1, bpf_jit_stack_offsetof(ctx, bpf_to_ppc(i))));
 
-	if (ctx->arena_vm_start)
+	if (ctx->arena_vm_start || (fp && fp->aux->exception_cb))
 		EMIT(PPC_RAW_LD(bpf_to_ppc(ARENA_VM_START), _R1,
 				bpf_jit_stack_offsetof(ctx, bpf_to_ppc(ARENA_VM_START))));
 
+
+	if (fp && fp->aux->exception_cb) {
+		EMIT(PPC_RAW_LD(_R0, _R4, PPC_LR_STKOFF));
+		EMIT(PPC_RAW_MTLR(_R0));
+	}
 	/* Tear down our stack frame */
-	if (bpf_has_stack_frame(ctx)) {
+	else if (bpf_has_stack_frame(ctx)) {
 		EMIT(PPC_RAW_ADDI(_R1, _R1, BPF_PPC_STACKFRAME + ctx->stack_size));
 		if (ctx->seen & SEEN_FUNC) {
 			EMIT(PPC_RAW_LD(_R0, _R1, PPC_LR_STKOFF));
@@ -183,9 +219,9 @@ static void bpf_jit_emit_common_epilogue(u32 *image, struct codegen_context *ctx
 	}
 }
 
-void bpf_jit_build_epilogue(u32 *image, struct codegen_context *ctx)
+void bpf_jit_build_epilogue(u32 *image, struct codegen_context *ctx, struct bpf_prog* fp)
 {
-	bpf_jit_emit_common_epilogue(image, ctx);
+	bpf_jit_emit_common_epilogue(image, ctx, fp);
 
 	/* Move result to r3 */
 	EMIT(PPC_RAW_MR(_R3, bpf_to_ppc(BPF_REG_0)));
@@ -293,7 +329,7 @@ int bpf_jit_emit_func_call_rel(u32 *image, u32 *fimage, struct codegen_context *
 	return 0;
 }
 
-static int bpf_jit_emit_tail_call(u32 *image, struct codegen_context *ctx, u32 out)
+static int bpf_jit_emit_tail_call(u32 *image, struct codegen_context *ctx, u32 out, struct bpf_prog* fp)
 {
 	/*
 	 * By now, the eBPF program has already setup parameters in r3, r4 and r5
@@ -370,7 +406,7 @@ static int bpf_jit_emit_tail_call(u32 *image, struct codegen_context *ctx, u32 o
 	EMIT(PPC_RAW_MTCTR(bpf_to_ppc(TMP_REG_1)));
 
 	/* tear down stack, restore NVRs, ... */
-	bpf_jit_emit_common_epilogue(image, ctx);
+	bpf_jit_emit_common_epilogue(image, ctx, fp);
 
 	EMIT(PPC_RAW_BCTR());
 
@@ -1371,7 +1407,7 @@ emit_clear:
 			 * we'll just fall through to the epilogue.
 			 */
 			if (i != flen - 1) {
-				ret = bpf_jit_emit_exit_insn(image, ctx, tmp1_reg, exit_addr);
+				ret = bpf_jit_emit_exit_insn(image, ctx, tmp1_reg, exit_addr, fp);
 				if (ret)
 					return ret;
 			}
@@ -1600,7 +1636,7 @@ cond_branch:
 		 */
 		case BPF_JMP | BPF_TAIL_CALL:
 			ctx->seen |= SEEN_TAILCALL;
-			ret = bpf_jit_emit_tail_call(image, ctx, addrs[i + 1]);
+			ret = bpf_jit_emit_tail_call(image, ctx, addrs[i + 1], fp);
 			if (ret < 0)
 				return ret;
 			break;

@@ -3007,8 +3007,11 @@ static bool bpf_stack_walker(void *cookie, u64 ip, u64 sp, u64 bp)
 	rcu_read_lock();
 	prog = bpf_prog_ksym_find(ip);
 	rcu_read_unlock();
-	if (!prog)
+	if (!prog){
+		//printk(KERN_CRIT "Maggi1: ctx->cnt : %d  frame_ptr : %lx\n", ctx->cnt, current_stack_frame());
 		return !ctx->cnt;
+	}
+	//printk(KERN_CRIT "Maggi2: ctx->cnt : %d  frame_ptr : %lx  sp : %llx  bp : %llx  prog : %lx\n", ctx->cnt, current_stack_frame(), sp, bp, prog);
 	ctx->cnt++;
 	if (bpf_is_subprog(prog))
 		return true;
@@ -3033,6 +3036,7 @@ __bpf_kfunc void bpf_throw(u64 cookie)
 	 * which skips compiler generated instrumentation to do the same.
 	 */
 	kasan_unpoison_task_stack_below((void *)(long)ctx.sp);
+	//printk(KERN_CRIT "Maggi3: ctx.sp: %llx  ctx.bp: %llx\n", ctx.sp, ctx.bp);
 	ctx.aux->bpf_exception_cb(cookie, ctx.sp, ctx.bp, 0, 0);
 	WARN(1, "A call to BPF exception callback should never return\n");
 }
