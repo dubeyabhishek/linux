@@ -56,6 +56,9 @@
 #elif defined(__powerpc__)
 	#define bpf_target_powerpc
 	#define bpf_target_defined
+#elif defined(__powerpc64__)
+	#define bpf_target_powerpc64
+	#define bpf_target_defined
 #elif defined(__sparc__)
 	#define bpf_target_sparc
 	#define bpf_target_defined
