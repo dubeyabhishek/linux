@@ -211,7 +211,7 @@ static inline void bpf_clear_seen_register(struct codegen_context *ctx, int i)
 void bpf_jit_init_reg_mapping(struct codegen_context *ctx);
 int bpf_jit_emit_func_call_rel(u32 *image, u32 *fimage, struct codegen_context *ctx, u64 func);
 int bpf_jit_build_body(struct bpf_prog *fp, u32 *image, u32 *fimage, struct codegen_context *ctx,
-		       u32 *addrs, int pass, bool extra_pass);
+		       u32 *addrs, int pass, bool extra_pass, unsigned int stub_idx);
 void bpf_jit_build_prologue(u32 *image, struct codegen_context *ctx);
 void bpf_jit_build_epilogue(u32 *image, struct codegen_context *ctx);
 void bpf_jit_build_fentry_stubs(u32 *image, struct codegen_context *ctx);
@@ -222,7 +222,7 @@ void prepare_for_fsession_fentry(u32 *image, struct codegen_context *ctx, int co
 void store_func_meta(u32 *image, struct codegen_context *ctx, u64 func_meta, int func_meta_off);
 int bpf_add_extable_entry(struct bpf_prog *fp, u32 *image, u32 *fimage, int pass,
 			  struct codegen_context *ctx, int insn_idx,
-			  int jmp_off, int dst_reg, u32 code);
+			  int jmp_off, int dst_reg, int src_reg, u32 code, int stub_idx);
 #endif
 
 #endif

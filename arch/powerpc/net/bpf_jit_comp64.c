@@ -880,7 +880,7 @@ static int emit_atomic_ld_st(const struct bpf_insn insn, struct codegen_context 
 
 /* Assemble the body code between the prologue & epilogue */
 int bpf_jit_build_body(struct bpf_prog *fp, u32 *image, u32 *fimage, struct codegen_context *ctx,
-		       u32 *addrs, int pass, bool extra_pass)
+		       u32 *addrs, int pass, bool extra_pass, unsigned int stub_idx)
 {
 	enum stf_barrier_type stf_barrier = stf_barrier_type_get();
 	bool sync_emitted, ori31_emitted;
@@ -1396,7 +1396,7 @@ emit_clear:
 				return ret;
 
 			ret = bpf_add_extable_entry(fp, image, fimage, pass, ctx,
-						    ctx->idx - 1, 4, -1, code);
+						    ctx->idx - 1, 4, dst_reg, src_reg, code, stub_idx);
 			if (ret)
 				return ret;
 
@@ -1422,7 +1422,7 @@ emit_clear:
 				return ret;
 
 			ret = bpf_add_extable_entry(fp, image, fimage, pass, ctx,
-						    ctx->idx - 1, 4, -1, code);
+						    ctx->idx - 1, 4, dst_reg, src_reg, code, stub_idx);
 			if (ret)
 				return ret;
 
@@ -1446,7 +1446,7 @@ emit_clear:
 			}
 			/* LDARX/LWARX should land here on exception. */
 			ret = bpf_add_extable_entry(fp, image, fimage, pass, ctx,
-						    tmp_idx, jmp_off, dst_reg, code);
+						    tmp_idx, jmp_off, dst_reg, src_reg, code, stub_idx);
 			if (ret)
 				return ret;
 
@@ -1577,7 +1577,7 @@ emit_clear:
 
 			if (BPF_MODE(code) == BPF_PROBE_MEM) {
 				ret = bpf_add_extable_entry(fp, image, fimage, pass, ctx,
-							    ctx->idx - 1, 4, dst_reg, code);
+							    ctx->idx - 1, 4, dst_reg, src_reg, code, stub_idx);
 				if (ret)
 					return ret;
 			}
@@ -1615,7 +1615,7 @@ emit_clear:
 				addrs[++i] = ctx->idx * 4;
 
 			ret = bpf_add_extable_entry(fp, image, fimage, pass, ctx,
-						    ctx->idx - 1, 4, dst_reg, code);
+						    ctx->idx - 1, 4, dst_reg, src_reg, code, stub_idx);
 			if (ret)
 				return ret;
 			break;

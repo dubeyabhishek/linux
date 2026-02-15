@@ -162,6 +162,38 @@ static void priv_stack_check_guard(void __percpu *priv_stack_ptr, int alloc_size
 	}
 }
 
+static int bpf_jit_emit_arena_violation_stub(u32 *image, struct codegen_context *ctx)
+{
+	int stub_start = ctx->idx;
+	const void *func = (const void *)bpf_prog_report_arena_violation;
+
+	/*
+ 	 * Minimal stub - no register saving needed!
+ 	 * We're in exception handler context, registers will be clobbered anyway.
+ 	 */
+
+	/* Save only LR (needed for return and as argument) */
+	EMIT(PPC_RAW_MFLR(_R0));
+	EMIT(PPC_RAW_STD(_R0, _R1, STACK_FRAME_MIN_SIZE + 32));
+
+	/* Setup arguments */
+	EMIT(PPC_RAW_LI(_R3, 1));                           /* arg1 = write (1) */
+	EMIT(PPC_RAW_MR(_R4, _R11));                        /* arg2 = addr (from r11) */
+	EMIT(PPC_RAW_LD(_R5, _R1, STACK_FRAME_MIN_SIZE + 32)); /* arg3 = nip */
+
+	/* Call function */
+	PPC_LI64(_R12, (u64)func);
+	EMIT(PPC_RAW_MTCTR(_R12));
+	EMIT(PPC_RAW_BCTRL());
+
+	/* Restore LR and return */
+	EMIT(PPC_RAW_LD(_R0, _R1, STACK_FRAME_MIN_SIZE + 32));
+	EMIT(PPC_RAW_MTLR(_R0));
+	EMIT(PPC_RAW_BLR());
+
+	return stub_start;
+}
+
 struct bpf_prog *bpf_int_jit_compile(struct bpf_prog *fp)
 {
 	u32 proglen;
@@ -185,6 +217,7 @@ struct bpf_prog *bpf_int_jit_compile(struct bpf_prog *fp)
 	u32 *fcode_base;
 	u32 extable_len;
 	u32 fixup_len;
+	unsigned int stub_idx;
 
 	if (!fp->jit_requested)
 		return org_fp;
@@ -266,7 +299,7 @@ struct bpf_prog *bpf_int_jit_compile(struct bpf_prog *fp)
 	cgctx.priv_sp = priv_stack_ptr ? (u64)priv_stack_ptr : 0;
 
 	/* Scouting faux-generate pass 0 */
-	if (bpf_jit_build_body(fp, NULL, NULL, &cgctx, addrs, 0, false)) {
+	if (bpf_jit_build_body(fp, NULL, NULL, &cgctx, addrs, 0, false, stub_idx)) {
 		/* We hit something illegal or unsupported. */
 		fp = org_fp;
 		goto out_addrs;
@@ -281,7 +314,7 @@ struct bpf_prog *bpf_int_jit_compile(struct bpf_prog *fp)
 	 */
 	if (cgctx.seen & SEEN_TAILCALL || !is_offset_in_branch_range((long)cgctx.idx * 4)) {
 		cgctx.idx = 0;
-		if (bpf_jit_build_body(fp, NULL, NULL, &cgctx, addrs, 0, false)) {
+		if (bpf_jit_build_body(fp, NULL, NULL, &cgctx, addrs, 0, false, stub_idx)) {
 			fp = org_fp;
 			goto out_addrs;
 		}
@@ -324,13 +357,17 @@ skip_init_ctx:
 		cgctx.alt_exit_addr = 0;
 		bpf_jit_build_prologue(code_base, &cgctx);
 		if (bpf_jit_build_body(fp, code_base, fcode_base, &cgctx, addrs, pass,
-				       extra_pass)) {
+				       extra_pass, stub_idx)) {
 			bpf_arch_text_copy(&fhdr->size, &hdr->size, sizeof(hdr->size));
 			bpf_jit_binary_pack_free(fhdr, hdr);
 			fp = org_fp;
 			goto out_addrs;
 		}
 		bpf_jit_build_epilogue(code_base, &cgctx);
+
+		if (fp->aux->num_exentries > 0 && pass == 2) {
+			stub_idx = bpf_jit_emit_arena_violation_stub(code_base, &cgctx);
+		}
 
 		if (bpf_jit_enable > 1)
 			pr_info("Pass %d: shrink = %d, seen = 0x%x\n", pass,
@@ -391,14 +428,15 @@ out:
  */
 int bpf_add_extable_entry(struct bpf_prog *fp, u32 *image, u32 *fimage, int pass,
 			  struct codegen_context *ctx, int insn_idx, int jmp_off,
-			  int dst_reg, u32 code)
+			  int dst_reg, int src_reg, u32 code, int stub_idx)
 {
 	off_t offset;
 	unsigned long pc;
 	struct exception_table_entry *ex, *ex_entry;
 	u32 *fixup;
+	long stub_addr, fixup_addr, branch_offset;
+	bool is_write;
 
-	/* Populate extable entries only in the last pass */
 	if (pass != 2)
 		return 0;
 
@@ -406,12 +444,6 @@ int bpf_add_extable_entry(struct bpf_prog *fp, u32 *image, u32 *fimage, int pass
 	    WARN_ON_ONCE(ctx->exentry_idx >= fp->aux->num_exentries))
 		return -EINVAL;
 
-	/*
-	 * Program is first written to image before copying to the
-	 * final location (fimage). Accordingly, update in the image first.
-	 * As all offsets used are relative, copying as is to the
-	 * final location should be alright.
-	 */
 	pc = (unsigned long)&image[insn_idx];
 	ex = (void *)fp->aux->extable - (void *)fimage + (void *)image;
 
@@ -419,16 +451,44 @@ int bpf_add_extable_entry(struct bpf_prog *fp, u32 *image, u32 *fimage, int pass
 		(fp->aux->num_exentries * BPF_FIXUP_LEN * 4) +
 		(ctx->exentry_idx * BPF_FIXUP_LEN * 4);
 
+	/*
+	 * Fixup entry layout (5 instructions, BPF_FIXUP_LEN = 5):
+	 * 
+	 * fixup[0]: li dst_reg, 0 (or nop)    - Clear destination register
+	 * fixup[1]: mr r11, src_reg           - Pass faulting addr to stub
+	 * fixup[2]: li r10, write_flag        - Pass write/read flag to stub
+	 * fixup[3]: bl stub                   - Call reporting stub
+	 * fixup[4]: b next_bpf_insn           - Jump to next BPF instruction
+	 */
+
+	/* Instruction 0: Clear destination register */
 	fixup[0] = PPC_RAW_LI(dst_reg, 0);
 	if (BPF_CLASS(code) == BPF_ST || BPF_CLASS(code) == BPF_STX)
 		fixup[0] = PPC_RAW_NOP();
 
-	if (IS_ENABLED(CONFIG_PPC32))
-		fixup[1] = PPC_RAW_LI(dst_reg - 1, 0); /* clear higher 32-bit register too */
+	/* Instruction 1: Move source register to r11 (faulting address) */
+	fixup[1] = PPC_RAW_MR(_R11, src_reg);
 
-	fixup[BPF_FIXUP_LEN - 1] =
-		PPC_RAW_BRANCH((long)(pc + jmp_off) - (long)&fixup[BPF_FIXUP_LEN - 1]);
+	/* Instruction 2: Set write flag in r10 */
+	is_write = (BPF_CLASS(code) == BPF_ST || BPF_CLASS(code) == BPF_STX);
+	fixup[2] = PPC_RAW_LI(_R10, is_write ? 1 : 0);
 
+	/* Instruction 3: Branch-and-link to stub */
+	stub_addr = (long)&image[stub_idx];
+	fixup_addr = (long)&fixup[3];
+	branch_offset = stub_addr - fixup_addr;
+	
+	if (!is_offset_in_branch_range(branch_offset)) {
+		WARN_ONCE(1, "BPF extable: stub branch out of range\n");
+		return -ERANGE;
+	}
+	fixup[3] = PPC_RAW_BL(branch_offset >> 2);
+
+	/* Instruction 4: Branch to next BPF instruction */
+	branch_offset = (long)(pc + jmp_off) - (long)&fixup[4];
+	fixup[4] = PPC_RAW_BRANCH(branch_offset >> 2);
+
+	/* Setup extable entry */
 	ex_entry = &ex[ctx->exentry_idx];
 
 	offset = pc - (long)&ex_entry->insn;
