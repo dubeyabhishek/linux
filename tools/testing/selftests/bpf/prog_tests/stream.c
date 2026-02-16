@@ -89,7 +89,7 @@ void test_stream_arena_fault_address(void)
 {
 	struct stream *skel;
 
-#if !defined(__x86_64__) && !defined(__aarch64__)
+#if !defined(__x86_64__) && !defined(__aarch64__) && !defined(__powerpc64__)
 	printf("%s:SKIP: arena fault reporting not supported\n", __func__);
 	test__skip();
 	return;

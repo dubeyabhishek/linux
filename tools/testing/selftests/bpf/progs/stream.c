@@ -63,6 +63,7 @@ int stream_exhaust(void *ctx)
 SEC("syscall")
 __arch_x86_64
 __arch_arm64
+__arch_powerpc64
 __arch_s390x
 __success __retval(0)
 __stderr("ERROR: Timeout detected for may_goto instruction")
@@ -120,6 +121,7 @@ int stream_syscall(void *ctx)
 SEC("syscall")
 __arch_x86_64
 __arch_arm64
+__arch_powerpc64
 __success __retval(0)
 __stderr("ERROR: Arena WRITE access at unmapped address 0x{{.*}}")
 __stderr("CPU: {{[0-9]+}} UID: 0 PID: {{[0-9]+}} Comm: {{.*}}")
@@ -154,6 +156,7 @@ int stream_arena_write_fault(void *ctx)
 SEC("syscall")
 __arch_x86_64
 __arch_arm64
+__arch_powerpc64
 __success __retval(0)
 __stderr("ERROR: Arena READ access at unmapped address 0x{{.*}}")
 __stderr("CPU: {{[0-9]+}} UID: 0 PID: {{[0-9]+}} Comm: {{.*}}")
@@ -195,6 +198,7 @@ static __noinline void subprog(void)
 SEC("syscall")
 __arch_x86_64
 __arch_arm64
+__arch_powerpc64
 __success __retval(0)
 __stderr("ERROR: Arena WRITE access at unmapped address 0x{{.*}}")
 __stderr("CPU: {{[0-9]+}} UID: 0 PID: {{[0-9]+}} Comm: {{.*}}")
@@ -219,6 +223,7 @@ static __noinline int timer_cb(void *map, int *key, struct bpf_timer *timer)
 SEC("syscall")
 __arch_x86_64
 __arch_arm64
+__arch_powerpc64
 __success __retval(0)
 __stderr("ERROR: Arena WRITE access at unmapped address 0x{{.*}}")
 __stderr("CPU: {{[0-9]+}} UID: 0 PID: {{[0-9]+}} Comm: {{.*}}")
@@ -241,6 +246,7 @@ int stream_arena_callback_fault(void *ctx)
 SEC("syscall")
 __arch_x86_64
 __arch_arm64
+__arch_powerpc64
 __success __retval(0)
 __stderr("CPU: {{[0-9]+}} UID: 0 PID: {{[0-9]+}} Comm: {{.*}}")
 __stderr("Call trace:\n"
@@ -262,6 +268,7 @@ int stream_print_stack_invalid_id(void *ctx)
 SEC("syscall")
 __arch_x86_64
 __arch_arm64
+__arch_powerpc64
 __success __retval(0)
 __stdout(_STR)
 __stderr("CPU: {{[0-9]+}} UID: 0 PID: {{[0-9]+}} Comm: {{.*}}")
